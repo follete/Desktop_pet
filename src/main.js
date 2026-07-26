@@ -19,7 +19,7 @@ ipcMain.on('move-window', (_, { dx, dy }) => {
     const { x: sx, y: sy, width: sw, height: sh } = display.workArea;
     const nx = Math.max(sx, Math.min(sx + sw - WIDTH, bounds.x + Math.round(dx)));
     const ny = Math.max(sy, Math.min(sy + sh - HEIGHT, bounds.y + Math.round(dy)));
-    win.setPosition(nx, ny);
+    win.setBounds({ x: nx, y: ny, width: WIDTH, height: HEIGHT });
   }
 });
 
@@ -73,10 +73,12 @@ function createWindow() {
     x, y,
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
     alwaysOnTop: true,
     hasShadow: false,
     resizable: false,
     skipTaskbar: true,
+    useContentSize: true,
     ...(process.platform === 'darwin' ? { visibleOnAllWorkspaces: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -103,7 +105,7 @@ function createTray() {
     icon = createTrayIcon();
   }
   tray = new Tray(icon);
-  tray.setToolTip('桌面宠物 · 咪咪');
+  tray.setToolTip('桌面宠物 · 年年');
 
   const ctx = Menu.buildFromTemplate([
     { label: '显示/隐藏', click: () => win.isVisible() ? win.hide() : win.show() },

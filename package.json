@@ -15,8 +15,9 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.desktop-pet.mimi",
+    "appId": "com.desktop-pet.niannian",
     "productName": "桌面宠物",
+    "artifactName": "DesktopPet-Setup-${version}.${ext}",
     "mac": {
       "target": "dmg",
       "icon": "assets/icon.png"
@@ -24,6 +25,10 @@
     "win": {
       "target": "nsis",
       "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     },
     "files": [
       "src/**/*",
