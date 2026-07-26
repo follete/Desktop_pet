@@ -1,0 +1,14 @@
+{
+  "name": "desktop-pet",
+  "version": "1.0.0",
+  "description": "轻量桌面宠物 — 精灵图动画播放器",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^43.2.0"
+  }
+}
