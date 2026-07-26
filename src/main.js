@@ -76,7 +76,7 @@ function createWindow() {
     hasShadow: false,
     resizable: false,
     skipTaskbar: true,
-    visibleOnAllWorkspaces: true,
+    ...(process.platform === 'darwin' ? { visibleOnAllWorkspaces: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: false,
@@ -85,8 +85,12 @@ function createWindow() {
   });
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setAlwaysOnTop(true, 'screen-saver');
+  } else {
+    win.setAlwaysOnTop(true, 'screen-saver');
+  }
 }
 
 function createTray() {
