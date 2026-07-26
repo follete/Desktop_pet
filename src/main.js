@@ -89,7 +89,7 @@ function createWindow() {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     win.setAlwaysOnTop(true, 'screen-saver');
   } else {
-    win.setAlwaysOnTop(true, 'screen-saver');
+    win.setAlwaysOnTop(true);
   }
 }
 
