@@ -64,31 +64,26 @@ class VideoEngine {
       this.bg = { r: rs[mid], g: gs[mid], b: bs[mid] };
     }
 
-    this.off.width = vw; this.off.height = vh;
-    this.offCtx.drawImage(v, 0, 0);
-    const frame = this.offCtx.getImageData(0, 0, vw, vh);
+    this.off.width = CELL_W; this.off.height = CELL_H;
+    this.offCtx.drawImage(vid, 0, 0, CELL_W, CELL_H);
+    const frame = this.offCtx.getImageData(0, 0, CELL_W, CELL_H);
     for (let i = 0; i < frame.data.length; i += 4) {
       const dr = frame.data[i] - this.bg.r, dg = frame.data[i + 1] - this.bg.g, db = frame.data[i + 2] - this.bg.b;
       if (Math.sqrt(dr * dr + dg * dg + db * db) < this.tol) frame.data[i + 3] = 0;
     }
-    const cs = Math.floor(Math.min(vw, vh) * 0.20);
-    const blank = (d, x, y) => { for (let py = y; py < y + cs; py++) for (let px = x; px < x + cs; px++) d[(py * vw + px) * 4 + 3] = 0; };
-    blank(frame.data, 0, 0); blank(frame.data, vw - cs, 0);
-    blank(frame.data, 0, vh - cs); blank(frame.data, vw - cs, vh - cs);
+    const cs = Math.floor(Math.min(CELL_W, CELL_H) * 0.20);
+    const blank = (d, x, y) => { for (let py = y; py < y + cs; py++) for (let px = x; px < x + cs; px++) d[(py * CELL_W + px) * 4 + 3] = 0; };
+    blank(frame.data, 0, 0); blank(frame.data, CELL_W - cs, 0);
+    blank(frame.data, 0, CELL_H - cs); blank(frame.data, CELL_W - cs, CELL_H - cs);
     this.offCtx.putImageData(frame, 0, 0);
 
     this.ctx.clearRect(0, 0, CELL_W, CELL_H);
-    // 按比例缩放居中，不拉伸变形
-    const ow = this.off.width, oh = this.off.height;
-    const scale = Math.min(CELL_W / ow, CELL_H / oh);
-    const dw = ow * scale, dh = oh * scale;
-    const dx = (CELL_W - dw) / 2, dy = (CELL_H - dh) / 2;
     if (this.mirror[this._state]) {
       this.ctx.save(); this.ctx.translate(CELL_W, 0); this.ctx.scale(-1, 1);
-      this.ctx.drawImage(this.off, 0, 0, ow, oh, -dx - dw, dy, -dw, dh);
+      this.ctx.drawImage(this.off, -CELL_W, 0);
       this.ctx.restore();
     } else {
-      this.ctx.drawImage(this.off, dx, dy, dw, dh);
+      this.ctx.drawImage(this.off, 0, 0);
     }
     return true;
   }
