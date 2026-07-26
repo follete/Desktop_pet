@@ -64,48 +64,40 @@ class VideoEngine {
       this.bg = { r: rs[mid], g: gs[mid], b: bs[mid] };
     }
 
-    const isWin = process.platform === 'win32';
+    this.off.width = vw; this.off.height = vh;
+    this.offCtx.drawImage(v, 0, 0);
+    const frame = this.offCtx.getImageData(0, 0, vw, vh);
+    for (let i = 0; i < frame.data.length; i += 4) {
+      const dr = frame.data[i] - this.bg.r, dg = frame.data[i + 1] - this.bg.g, db = frame.data[i + 2] - this.bg.b;
+      if (Math.sqrt(dr * dr + dg * dg + db * db) < this.tol) frame.data[i + 3] = 0;
+    }
+    const cs = Math.floor(Math.min(vw, vh) * 0.20);
+    const blank = (d, x, y) => { for (let py = y; py < y + cs; py++) for (let px = x; px < x + cs; px++) d[(py * vw + px) * 4 + 3] = 0; };
+    blank(frame.data, 0, 0); blank(frame.data, vw - cs, 0);
+    blank(frame.data, 0, vh - cs); blank(frame.data, vw - cs, vh - cs);
+    this.offCtx.putImageData(frame, 0, 0);
 
-    if (isWin) {
-      // Windows: 先缩放到 192x208 再处理
-      this.off.width = CELL_W; this.off.height = CELL_H;
-      this.offCtx.drawImage(vid, 0, 0, CELL_W, CELL_H);
-      const frame = this.offCtx.getImageData(0, 0, CELL_W, CELL_H);
-      for (let i = 0; i < frame.data.length; i += 4) {
-        const dr = frame.data[i] - this.bg.r, dg = frame.data[i + 1] - this.bg.g, db = frame.data[i + 2] - this.bg.b;
-        if (Math.sqrt(dr * dr + dg * dg + db * db) < this.tol) frame.data[i + 3] = 0;
-      }
-      const cs = Math.floor(Math.min(CELL_W, CELL_H) * 0.20);
-      const blank = (d, x, y) => { for (let py = y; py < y + cs; py++) for (let px = x; px < x + cs; px++) d[(py * CELL_W + px) * 4 + 3] = 0; };
-      blank(frame.data, 0, 0); blank(frame.data, CELL_W - cs, 0);
-      blank(frame.data, 0, CELL_H - cs); blank(frame.data, CELL_W - cs, CELL_H - cs);
-      this.offCtx.putImageData(frame, 0, 0);
-
-      this.ctx.clearRect(0, 0, CELL_W, CELL_H);
+    this.ctx.clearRect(0, 0, CELL_W, CELL_H);
+    if (process.platform === 'win32') {
+      // Windows: 先缩放到 192x208 再贴到主画布
+      const tmp = document.createElement('canvas');
+      tmp.width = CELL_W; tmp.height = CELL_H;
+      tmp.getContext('2d').drawImage(this.off, 0, 0, CELL_W, CELL_H);
       if (this.mirror[this._state]) {
         this.ctx.save(); this.ctx.translate(CELL_W, 0); this.ctx.scale(-1, 1);
-        this.ctx.drawImage(this.off, -CELL_W, 0);
+        this.ctx.drawImage(tmp, -CELL_W, 0);
         this.ctx.restore();
       } else {
-        this.ctx.drawImage(this.off, 0, 0);
+        this.ctx.drawImage(tmp, 0, 0);
       }
     } else {
-      // macOS: 保持原始尺寸处理
-      this.off.width = vw; this.off.height = vh;
-      this.offCtx.drawImage(vid, 0, 0);
-      const frame = this.offCtx.getImageData(0, 0, vw, vh);
-      for (let i = 0; i < frame.data.length; i += 4) {
-        const dr = frame.data[i] - this.bg.r, dg = frame.data[i + 1] - this.bg.g, db = frame.data[i + 2] - this.bg.b;
-        if (Math.sqrt(dr * dr + dg * dg + db * db) < this.tol) frame.data[i + 3] = 0;
+      // macOS: 直接缩放绘制
+      if (this.mirror[this._state]) {
+        this.ctx.save(); this.ctx.translate(CELL_W, 0); this.ctx.scale(-1, 1);
+        this.ctx.drawImage(this.off, 0, 0, CELL_W, CELL_H); this.ctx.restore();
+      } else {
+        this.ctx.drawImage(this.off, 0, 0, CELL_W, CELL_H);
       }
-      const cs = Math.floor(Math.min(vw, vh) * 0.20);
-      const blank = (d, x, y) => { for (let py = y; py < y + cs; py++) for (let px = x; px < x + cs; px++) d[(py * vw + px) * 4 + 3] = 0; };
-      blank(frame.data, 0, 0); blank(frame.data, vw - cs, 0);
-      blank(frame.data, 0, vh - cs); blank(frame.data, vw - cs, vh - cs);
-      this.offCtx.putImageData(frame, 0, 0);
-
-      this.ctx.clearRect(0, 0, CELL_W, CELL_H);
-      this.ctx.drawImage(this.off, 0, 0, CELL_W, CELL_H);
     }
     return true;
   }
