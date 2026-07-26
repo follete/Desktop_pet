@@ -78,11 +78,17 @@ class VideoEngine {
     this.offCtx.putImageData(frame, 0, 0);
 
     this.ctx.clearRect(0, 0, CELL_W, CELL_H);
+    // 按比例缩放居中，不拉伸变形
+    const ow = this.off.width, oh = this.off.height;
+    const scale = Math.min(CELL_W / ow, CELL_H / oh);
+    const dw = ow * scale, dh = oh * scale;
+    const dx = (CELL_W - dw) / 2, dy = (CELL_H - dh) / 2;
     if (this.mirror[this._state]) {
       this.ctx.save(); this.ctx.translate(CELL_W, 0); this.ctx.scale(-1, 1);
-      this.ctx.drawImage(this.off, 0, 0, CELL_W, CELL_H); this.ctx.restore();
+      this.ctx.drawImage(this.off, 0, 0, ow, oh, -dx - dw, dy, -dw, dh);
+      this.ctx.restore();
     } else {
-      this.ctx.drawImage(this.off, 0, 0, CELL_W, CELL_H);
+      this.ctx.drawImage(this.off, dx, dy, dw, dh);
     }
     return true;
   }

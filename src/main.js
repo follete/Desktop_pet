@@ -14,10 +14,11 @@ const HEIGHT = 208;
 // IPC: 窗口移动（限制在屏幕内）
 ipcMain.on('move-window', (_, { dx, dy }) => {
   if (win) {
-    const [x, y] = win.getPosition();
-    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
-    const nx = Math.max(0, Math.min(sw - WIDTH, x + Math.round(dx)));
-    const ny = Math.max(0, Math.min(sh - HEIGHT, y + Math.round(dy)));
+    const bounds = win.getBounds();
+    const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y });
+    const { x: sx, y: sy, width: sw, height: sh } = display.workArea;
+    const nx = Math.max(sx, Math.min(sx + sw - WIDTH, bounds.x + Math.round(dx)));
+    const ny = Math.max(sy, Math.min(sy + sh - HEIGHT, bounds.y + Math.round(dy)));
     win.setPosition(nx, ny);
   }
 });
