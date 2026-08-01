@@ -5,7 +5,13 @@ const path = require('path');
 const fs = require('fs');
 
 const CELL_W = 192, CELL_H = 208;
-const STATES = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'dragged', 'struggling'];
+const STATES = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'dragged', 'struggling', 'edge-cling-left', 'edge-cling-right', 'edge-climb-left', 'edge-climb-right', 'edge-jump-left', 'edge-jump-right'];
+
+const MIRROR_MAP = {
+  'edge-cling-right': 'edge-cling-left',
+  'edge-climb-right': 'edge-climb-left',
+  'edge-jump-right': 'edge-jump-left',
+};
 
 // === 视频引擎 ===
 class VideoEngine {
@@ -22,6 +28,10 @@ class VideoEngine {
     const c = document.getElementById('videos');
     STATES.forEach(name => {
       let fp = path.join(videoDir, name + '.mp4'), m = false;
+      if (MIRROR_MAP[name] && !fs.existsSync(fp)) {
+        fp = path.join(videoDir, MIRROR_MAP[name] + '.mp4');
+        m = true;
+      }
       if (name === 'running-left' && !fs.existsSync(fp)) { fp = path.join(videoDir, 'running-right.mp4'); m = true; }
       if (!fs.existsSync(fp)) return;
       const v = document.createElement('video');
@@ -46,7 +56,7 @@ class VideoEngine {
 
   draw() {
     const v = this.active;
-    if (!v || v.readyState < 2 || v.videoWidth === 0) return false;
+    if (!v || v.readyState < 2 || v.videoWidth === 0) return true; // 帧未就绪，保留上一帧避免闪白
     const vw = v.videoWidth, vh = v.videoHeight;
 
     if (!this.bg) {
@@ -74,9 +84,10 @@ class VideoEngine {
         if (Math.sqrt(dr * dr + dg * dg + db * db) < this.tol) frame.data[i + 3] = 0;
       }
       const cs = Math.floor(Math.min(CELL_W, CELL_H) * 0.20);
-      const blank = (d, x, y) => { for (let py = y; py < y + cs; py++) for (let px = x; px < x + cs; px++) d[(py * CELL_W + px) * 4 + 3] = 0; };
+      const ch = Math.floor(cs / 3);
+      const blank = (d, x, y) => { for (let py = y; py < y + ch; py++) for (let px = x; px < x + cs; px++) d[(py * CELL_W + px) * 4 + 3] = 0; };
       blank(frame.data, 0, 0); blank(frame.data, CELL_W - cs, 0);
-      blank(frame.data, 0, CELL_H - cs); blank(frame.data, CELL_W - cs, CELL_H - cs);
+      blank(frame.data, 0, CELL_H - ch); blank(frame.data, CELL_W - cs, CELL_H - ch);
       this.offCtx.putImageData(frame, 0, 0);
 
       this.ctx.clearRect(0, 0, CELL_W, CELL_H);
@@ -99,9 +110,10 @@ class VideoEngine {
       if (Math.sqrt(dr * dr + dg * dg + db * db) < this.tol) frame.data[i + 3] = 0;
     }
     const cs = Math.floor(Math.min(vw, vh) * 0.20);
-    const blank = (d, x, y) => { for (let py = y; py < y + cs; py++) for (let px = x; px < x + cs; px++) d[(py * vw + px) * 4 + 3] = 0; };
+    const ch = Math.floor(cs / 3);
+    const blank = (d, x, y) => { for (let py = y; py < y + ch; py++) for (let px = x; px < x + cs; px++) d[(py * vw + px) * 4 + 3] = 0; };
     blank(frame.data, 0, 0); blank(frame.data, vw - cs, 0);
-    blank(frame.data, 0, vh - cs); blank(frame.data, vw - cs, vh - cs);
+    blank(frame.data, 0, vh - ch); blank(frame.data, vw - cs, vh - ch);
     this.offCtx.putImageData(frame, 0, 0);
 
     this.ctx.clearRect(0, 0, CELL_W, CELL_H);
@@ -138,10 +150,27 @@ class PetEngine {
     this.walkDir = 1;
     this.userState = null;
 
+    // 屏幕边界 + 窗口位置追踪
+    const { ipcRenderer } = require('electron');
+    this._screenWA = ipcRenderer.sendSync('get-screen-info');
+    const pos = ipcRenderer.sendSync('get-window-pos');
+    this._winX = pos.x; this._winY = pos.y;
+    ipcRenderer.on('window-moved', (_, info) => {
+      this._winX = info.x; this._winY = info.y;
+      this._screenWA = { x: info.sx, y: info.sy, width: info.sw, height: info.sh };
+    });
+
+    // 边缘行为状态
+    this._edgePhase = null;    // null | 'cling' | 'climb' | 'jump'
+    this._edgeSide = null;     // 'left' | 'right'
+    this._edgeStartTime = null;
+    this._edgeClimbTarget = 0;
+    this._edgeClimbSpeed = 0;
+    this._edgeJumpStartY = 0;
+
     this.video.onEnded = () => {
       if (this.state === 'dragged') {
         if (this._dragTarget) {
-          // 绕过 play() 的 active===v 早退守卫，直接重播
           const v = this.video.active;
           v.currentTime = 0;
           v.play().catch(() => {});
@@ -149,13 +178,23 @@ class PetEngine {
         }
         this._setState('idle');
       } else if (this.state === 'struggling') {
-        // 挣扎结束 → 自动松手
         this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
         if (this._onMove) { document.removeEventListener('mousemove', this._onMove); this._onMove = null; }
         if (this._onUp) { document.removeEventListener('mouseup', this._onUp); this._onUp = null; }
         this._setState('idle');
+      } else if (this.state.startsWith('edge-cling')) {
+        if (this._edgePhase === 'cling') { this.video.play(this.state); return; }
+        this._setState('idle');
+      } else if (this.state.startsWith('edge-climb')) {
+        if (this._edgePhase === 'climb') { this.video.play(this.state); return; }
+        this._setState('idle');
+      } else if (this.state.startsWith('edge-jump')) {
+        const v = this.video.active;
+        v.currentTime = 0;
+        v.play().catch(() => {});
+        return;
       } else if (this.state === 'idle') {
-        const av = STATES.filter(s => s !== 'idle' && s !== 'dragged' && s !== 'struggling' && this.video.has(s));
+        const av = STATES.filter(s => !s.startsWith('edge-') && s !== 'idle' && s !== 'dragged' && s !== 'struggling' && this.video.has(s));
         if (av.length) this._setState(av[Math.floor(Math.random() * av.length)]);
       } else {
         this._setState('idle');
@@ -190,23 +229,35 @@ class PetEngine {
       moved = false;
       const sx = e.screenX, sy = e.screenY;
       const onPreMove = ev => {
-        if (Math.abs(ev.screenX - sx) > 3 || Math.abs(ev.screenY - sy) > 3) {
-          // 动了就激活拖拽
+        if (Math.abs(ev.screenX - sx) > 8 || Math.abs(ev.screenY - sy) > 8) {
           document.removeEventListener('mousemove', onPreMove);
           document.removeEventListener('mouseup', onPreUp);
+          // 终止边缘动画和挣扎
+          this._edgePhase = null; this._edgeSide = null;
+          this._dragPhase = null; this._struggleStartTime = null;
           this._dragStartTime = performance.now();
           this._dragPhase = 'relaxed';
           this._dragTarget = { x: sx, y: sy, lastX: sx, lastY: sy };
           this._setState('dragged');
           moved = true;
           this._onMove = e2 => {
+            if (this._edgePhase) {
+              if (performance.now() - this._edgeStartTime > 200) {
+                this._edgePhase = null; this._edgeSide = null;
+                this._dragPhase = 'relaxed';
+                this._dragStartTime = performance.now();
+                this._setState('dragged');
+              }
+            }
             if (!this._dragTarget) return;
             this._dragTarget.x = e2.screenX;
             this._dragTarget.y = e2.screenY;
           };
           this._onUp = () => {
-            this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
-            this._setState('idle');
+            if (!this._edgePhase) {
+              this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
+              this._setState('idle');
+            }
             document.removeEventListener('mousemove', this._onMove);
             document.removeEventListener('mouseup', this._onUp);
             this._onMove = null; this._onUp = null;
@@ -222,11 +273,12 @@ class PetEngine {
       document.addEventListener('mousemove', onPreMove);
       document.addEventListener('mouseup', onPreUp);
     });
-    this.canvas.addEventListener('dblclick', () => this._setState('jumping'));
-    this.canvas.addEventListener('click', () => { if (!moved) this._setState('waving'); });
+    this.canvas.addEventListener('dblclick', () => { if (!this._edgePhase && this._dragPhase !== 'struggling') this._setState('jumping'); });
+    this.canvas.addEventListener('click', () => { if (!this._edgePhase && this._dragPhase !== 'struggling' && !moved) this._setState('waving'); });
     this.canvas.addEventListener('contextmenu', e => {
       e.preventDefault();
       this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
+      this._edgePhase = null; this._edgeSide = null;
       if (this._onMove) { document.removeEventListener('mousemove', this._onMove); this._onMove = null; }
       if (this._onUp) { document.removeEventListener('mouseup', this._onUp); this._onUp = null; }
       require('electron').ipcRenderer.send('show-context-menu');
@@ -237,26 +289,53 @@ class PetEngine {
   _loop(prev = 0) {
     const now = performance.now();
 
-    // 合并拖拽 + 行走的位移，每帧只发一次 IPC
     let dx = 0, dy = 0;
-    if (this._dragTarget) {
+
+    // 边缘模式：动画接管位移
+    if (this._edgePhase) {
+      if (this._edgePhase === 'climb') {
+        if (this._winY > this._edgeClimbTarget && now - this._edgeStartTime >= 500) {
+          dy = -this._edgeClimbSpeed;
+        }
+      } else if (this._edgePhase === 'jump') {
+        const je = (now - this._edgeStartTime) / 1000;
+        if (je > 2 && je <= 7) {
+          const H = 120;
+          let targetY;
+          if (je <= 4) {
+            const rt = (je - 2) / 2; // 0→1，2-4s 上升到顶点
+            targetY = this._edgeJumpStartY - H * (2 * rt - rt * rt);
+          } else {
+            const ft = (je - 4) / 3; // 0→1，4-7s 加速下落
+            targetY = this._edgeJumpStartY - H + H * ft * ft;
+          }
+          dy = targetY - this._winY;
+          dx = this._edgeSide === 'left' ? 1 : -1;
+        }
+      }
+    } else if (this._dragTarget) {
+      // 正常拖拽追踪
       dx = this._dragTarget.x - this._dragTarget.lastX;
       dy = this._dragTarget.y - this._dragTarget.lastY;
       this._dragTarget.lastX = this._dragTarget.x;
       this._dragTarget.lastY = this._dragTarget.y;
     }
 
-    // 挣扎期下坠（独立于鼠标追踪）
     if (this._dragPhase === 'struggling' && this._struggleStartTime) {
       const se = now - this._struggleStartTime;
       if (se > 1000 && se <= 3000) {
-        const t = (se - 1000) / 2000; // 0→1
-        dy += 1 + t * t * 4; // 加速下坠（轻柔）
+        const t = (se - 1000) / 2000;
+        dy += 1 + t * t * 4;
       }
     }
     if (this.walking) {
       dx += this.walkDir * 1.5;
     }
+
+    // 更新追踪位置（IPC 回传修正漂移）
+    this._winX += dx;
+    this._winY += dy;
+
     if (dx !== 0 || dy !== 0) {
       require('electron').ipcRenderer.send('move-window', { dx, dy });
     }
@@ -265,14 +344,49 @@ class PetEngine {
       this.ctx.clearRect(0, 0, CELL_W, CELL_H);
     }
 
-    // 切换挣扎 → 脱离鼠标控制
-    if (this._dragTarget && this._dragPhase === 'relaxed' && now - this._dragStartTime >= 10000) {
+    // 边缘阶段切换（放 draw 后避免闪白）
+    if (this._edgePhase) {
+      if (this._edgePhase === 'cling' && now - this._edgeStartTime >= 3000) {
+        this._edgePhase = 'climb';
+        this._edgeStartTime = now;
+        this._edgeClimbTarget = Math.max(this._screenWA.y + 20, this._winY - (150 + Math.random() * 200));
+        const distance = this._winY - this._edgeClimbTarget;
+        const duration = 2 + Math.random() * 3; // 2~5 秒随机
+        this._edgeClimbSpeed = distance / (duration * 60);
+        this._setState(this._edgeSide === 'left' ? 'edge-climb-left' : 'edge-climb-right');
+      } else if (this._edgePhase === 'climb' && this._winY <= this._edgeClimbTarget) {
+        this._edgePhase = 'jump';
+        this._edgeStartTime = now;
+        this._edgeJumpStartY = this._winY;
+        this._setState(this._edgeSide === 'left' ? 'edge-jump-left' : 'edge-jump-right');
+      } else if (this._edgePhase === 'jump' && now - this._edgeStartTime >= 10000) {
+        this._edgePhase = null; this._edgeSide = null;
+        this._dragTarget = null; this._dragPhase = null;
+        this._setState('idle');
+      }
+    }
+
+    // 挣扎转换
+    if (this._dragTarget && this._dragPhase === 'relaxed' && !this._edgePhase && now - this._dragStartTime >= 10000) {
       this._dragPhase = 'struggling';
       this._struggleStartTime = now;
       this._dragTarget = null;
       if (this._onMove) { document.removeEventListener('mousemove', this._onMove); this._onMove = null; }
       if (this._onUp) { document.removeEventListener('mouseup', this._onUp); this._onUp = null; }
       this._setState('struggling');
+    }
+
+    // 边缘检测：拖到屏幕边缘触发攀爬
+    if (this._dragTarget && this._dragPhase === 'relaxed' && !this._edgePhase) {
+      const atLeft = this._winX <= this._screenWA.x + 1;
+      const atRight = this._winX + CELL_W >= this._screenWA.x + this._screenWA.width - 1;
+      if (atLeft || atRight) {
+        this._edgePhase = 'cling';
+        this._edgeSide = atLeft ? 'left' : 'right';
+        this._edgeStartTime = now;
+        this._dragPhase = null; // 脱离拖拽逻辑，避免挣扎冲突
+        this._setState(atLeft ? 'edge-cling-left' : 'edge-cling-right');
+      }
     }
 
     requestAnimationFrame(() => this._loop(now));

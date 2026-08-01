@@ -12,7 +12,7 @@ const WIDTH = 192;
 const HEIGHT = 208;
 
 // IPC: 窗口移动（限制在屏幕内）
-ipcMain.on('move-window', (_, { dx, dy }) => {
+ipcMain.on('move-window', (event, { dx, dy }) => {
   if (win) {
     const bounds = win.getBounds();
     const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y });
@@ -20,7 +20,21 @@ ipcMain.on('move-window', (_, { dx, dy }) => {
     const nx = Math.max(sx, Math.min(sx + sw - WIDTH, bounds.x + Math.round(dx)));
     const ny = Math.max(sy, Math.min(sy + sh - HEIGHT, bounds.y + Math.round(dy)));
     win.setBounds({ x: nx, y: ny, width: WIDTH, height: HEIGHT });
+    // 回传实际位置和屏幕边界，供渲染进程边缘检测
+    event.sender.send('window-moved', { x: nx, y: ny, sx, sy, sw, sh });
   }
+});
+
+// IPC: 获取屏幕工作区
+ipcMain.on('get-screen-info', (event) => {
+  const display = screen.getPrimaryDisplay();
+  event.returnValue = display.workArea;
+});
+
+// IPC: 获取窗口位置
+ipcMain.on('get-window-pos', (event) => {
+  if (win) event.returnValue = win.getBounds();
+  else event.returnValue = { x: 0, y: 0 };
 });
 
 // IPC: 右键菜单
