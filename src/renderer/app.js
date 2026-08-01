@@ -162,22 +162,34 @@ class PetEngine {
   }
 
   _bindInput() {
-    let dragging = false, moved = false, start = { x: 0, y: 0 };
+    let moved = false;
+    this._dragTarget = null;
+
+    const onMove = e => {
+      if (!this._dragTarget) return;
+      if (Math.abs(e.screenX - this._dragTarget.lastX) > 2 || Math.abs(e.screenY - this._dragTarget.lastY) > 2) moved = true;
+      this._dragTarget.x = e.screenX;
+      this._dragTarget.y = e.screenY;
+    };
+    const onUp = () => {
+      this._dragTarget = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
     this.canvas.addEventListener('mousedown', e => {
-      if (e.button === 0) { dragging = true; moved = false; start = { x: e.screenX, y: e.screenY }; }
+      if (e.button !== 0) return;
+      moved = false;
+      this._dragTarget = { x: e.screenX, y: e.screenY, lastX: e.screenX, lastY: e.screenY };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
     });
-    this.canvas.addEventListener('mousemove', e => {
-      if (!dragging) return;
-      const dx = e.screenX - start.x, dy = e.screenY - start.y;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
-      start = { x: e.screenX, y: e.screenY };
-      require('electron').ipcRenderer.send('move-window', { dx, dy });
-    });
-    this.canvas.addEventListener('mouseup', () => { dragging = false; });
     this.canvas.addEventListener('dblclick', () => this._setState('jumping'));
     this.canvas.addEventListener('click', () => { if (!moved) this._setState('waving'); });
     this.canvas.addEventListener('contextmenu', e => {
-      e.preventDefault(); dragging = false;
+      e.preventDefault(); this._dragTarget = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
       require('electron').ipcRenderer.send('show-context-menu');
     });
     require('electron').ipcRenderer.on('set-state', (_, s) => { this.userState = s; this._setState(s); });
@@ -185,10 +197,20 @@ class PetEngine {
 
   _loop(prev = 0) {
     const now = performance.now();
-    const dt = prev ? now - prev : 16;
 
+    // 合并拖拽 + 行走的位移，每帧只发一次 IPC
+    let dx = 0, dy = 0;
+    if (this._dragTarget) {
+      dx = this._dragTarget.x - this._dragTarget.lastX;
+      dy = this._dragTarget.y - this._dragTarget.lastY;
+      this._dragTarget.lastX = this._dragTarget.x;
+      this._dragTarget.lastY = this._dragTarget.y;
+    }
     if (this.walking) {
-      require('electron').ipcRenderer.send('move-window', { dx: this.walkDir * 1.5, dy: 0 });
+      dx += this.walkDir * 1.5;
+    }
+    if (dx !== 0 || dy !== 0) {
+      require('electron').ipcRenderer.send('move-window', { dx, dy });
     }
 
     if (!this.video.draw()) {
