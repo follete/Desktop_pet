@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 
 const CELL_W = 192, CELL_H = 208;
-const STATES = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review'];
+const STATES = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'dragged', 'struggling'];
 
 // === 视频引擎 ===
 class VideoEngine {
@@ -14,7 +14,7 @@ class VideoEngine {
     this.videos = {};
     this.active = null;
     this.bg = null;
-    this.tol = 70;
+    this.tol = 75;
     this.off = document.createElement('canvas');
     this.offCtx = this.off.getContext('2d');
     this.mirror = {};
@@ -139,8 +139,23 @@ class PetEngine {
     this.userState = null;
 
     this.video.onEnded = () => {
-      if (this.state === 'idle') {
-        const av = STATES.filter(s => s !== 'idle' && this.video.has(s));
+      if (this.state === 'dragged') {
+        if (this._dragTarget) {
+          // 绕过 play() 的 active===v 早退守卫，直接重播
+          const v = this.video.active;
+          v.currentTime = 0;
+          v.play().catch(() => {});
+          return;
+        }
+        this._setState('idle');
+      } else if (this.state === 'struggling') {
+        // 挣扎结束 → 自动松手
+        this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
+        if (this._onMove) { document.removeEventListener('mousemove', this._onMove); this._onMove = null; }
+        if (this._onUp) { document.removeEventListener('mouseup', this._onUp); this._onUp = null; }
+        this._setState('idle');
+      } else if (this.state === 'idle') {
+        const av = STATES.filter(s => s !== 'idle' && s !== 'dragged' && s !== 'struggling' && this.video.has(s));
         if (av.length) this._setState(av[Math.floor(Math.random() * av.length)]);
       } else {
         this._setState('idle');
@@ -164,32 +179,56 @@ class PetEngine {
   _bindInput() {
     let moved = false;
     this._dragTarget = null;
-
-    const onMove = e => {
-      if (!this._dragTarget) return;
-      if (Math.abs(e.screenX - this._dragTarget.lastX) > 2 || Math.abs(e.screenY - this._dragTarget.lastY) > 2) moved = true;
-      this._dragTarget.x = e.screenX;
-      this._dragTarget.y = e.screenY;
-    };
-    const onUp = () => {
-      this._dragTarget = null;
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
+    this._dragPhase = null;
+    this._dragStartTime = null;
+    this._struggleStartTime = null;
+    this._onMove = null;
+    this._onUp = null;
 
     this.canvas.addEventListener('mousedown', e => {
       if (e.button !== 0) return;
       moved = false;
-      this._dragTarget = { x: e.screenX, y: e.screenY, lastX: e.screenX, lastY: e.screenY };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      const sx = e.screenX, sy = e.screenY;
+      const onPreMove = ev => {
+        if (Math.abs(ev.screenX - sx) > 3 || Math.abs(ev.screenY - sy) > 3) {
+          // 动了就激活拖拽
+          document.removeEventListener('mousemove', onPreMove);
+          document.removeEventListener('mouseup', onPreUp);
+          this._dragStartTime = performance.now();
+          this._dragPhase = 'relaxed';
+          this._dragTarget = { x: sx, y: sy, lastX: sx, lastY: sy };
+          this._setState('dragged');
+          moved = true;
+          this._onMove = e2 => {
+            if (!this._dragTarget) return;
+            this._dragTarget.x = e2.screenX;
+            this._dragTarget.y = e2.screenY;
+          };
+          this._onUp = () => {
+            this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
+            this._setState('idle');
+            document.removeEventListener('mousemove', this._onMove);
+            document.removeEventListener('mouseup', this._onUp);
+            this._onMove = null; this._onUp = null;
+          };
+          document.addEventListener('mousemove', this._onMove);
+          document.addEventListener('mouseup', this._onUp);
+        }
+      };
+      const onPreUp = () => {
+        document.removeEventListener('mousemove', onPreMove);
+        document.removeEventListener('mouseup', onPreUp);
+      };
+      document.addEventListener('mousemove', onPreMove);
+      document.addEventListener('mouseup', onPreUp);
     });
     this.canvas.addEventListener('dblclick', () => this._setState('jumping'));
     this.canvas.addEventListener('click', () => { if (!moved) this._setState('waving'); });
     this.canvas.addEventListener('contextmenu', e => {
-      e.preventDefault(); this._dragTarget = null;
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      e.preventDefault();
+      this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
+      if (this._onMove) { document.removeEventListener('mousemove', this._onMove); this._onMove = null; }
+      if (this._onUp) { document.removeEventListener('mouseup', this._onUp); this._onUp = null; }
       require('electron').ipcRenderer.send('show-context-menu');
     });
     require('electron').ipcRenderer.on('set-state', (_, s) => { this.userState = s; this._setState(s); });
@@ -206,6 +245,15 @@ class PetEngine {
       this._dragTarget.lastX = this._dragTarget.x;
       this._dragTarget.lastY = this._dragTarget.y;
     }
+
+    // 挣扎期下坠（独立于鼠标追踪）
+    if (this._dragPhase === 'struggling' && this._struggleStartTime) {
+      const se = now - this._struggleStartTime;
+      if (se > 1000 && se <= 3000) {
+        const t = (se - 1000) / 2000; // 0→1
+        dy += 1 + t * t * 4; // 加速下坠（轻柔）
+      }
+    }
     if (this.walking) {
       dx += this.walkDir * 1.5;
     }
@@ -215,6 +263,16 @@ class PetEngine {
 
     if (!this.video.draw()) {
       this.ctx.clearRect(0, 0, CELL_W, CELL_H);
+    }
+
+    // 切换挣扎 → 脱离鼠标控制
+    if (this._dragTarget && this._dragPhase === 'relaxed' && now - this._dragStartTime >= 10000) {
+      this._dragPhase = 'struggling';
+      this._struggleStartTime = now;
+      this._dragTarget = null;
+      if (this._onMove) { document.removeEventListener('mousemove', this._onMove); this._onMove = null; }
+      if (this._onUp) { document.removeEventListener('mouseup', this._onUp); this._onUp = null; }
+      this._setState('struggling');
     }
 
     requestAnimationFrame(() => this._loop(now));
