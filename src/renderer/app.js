@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 
 const CELL_W = 192, CELL_H = 208;
-const STATES = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'dragged', 'struggling', 'edge-cling-left', 'edge-cling-right', 'edge-climb-left', 'edge-climb-right', 'edge-jump-left', 'edge-jump-right'];
+const STATES = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'waking', 'dragged', 'struggling', 'edge-cling-left', 'edge-cling-right', 'edge-climb-left', 'edge-climb-right', 'edge-jump-left', 'edge-jump-right'];
 
 const MIRROR_MAP = {
   'edge-cling-right': 'edge-cling-left',
@@ -196,8 +196,10 @@ class PetEngine {
         v.currentTime = 0;
         v.play().catch(() => {});
         return;
+      } else if (this.state === 'waiting') {
+        setTimeout(() => { if (this.state === 'waiting') this._setState('waking'); }, 20000);
       } else if (this.state === 'idle') {
-        const av = STATES.filter(s => !s.startsWith('edge-') && s !== 'idle' && s !== 'dragged' && s !== 'struggling' && this.video.has(s));
+        const av = STATES.filter(s => !s.startsWith('edge-') && s !== 'idle' && s !== 'waking' && s !== 'dragged' && s !== 'struggling' && this.video.has(s));
         if (av.length) this._setState(av[Math.floor(Math.random() * av.length)]);
       } else {
         this._setState('idle');

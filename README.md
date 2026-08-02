@@ -5,25 +5,28 @@
 ## 功能
 
 - 🎬 视频动画 — 流畅的桌宠体验
-- 🐱 14 种状态：发呆、行走、挥手、跳跃、难过、等待、思考、检查、被拎起、挣扎、扒边、上爬、蹬墙跳
+- 🐱 15 种状态：发呆、行走、挥手、跳跃、难过、等待、醒来、思考、检查、被拎起、挣扎、扒边、上爬、蹬墙跳
 - 🖱️ 单击挥手，双击跳跃，右键菜单切换状态
-- ✋ 拖拽触发拎起动画，10 秒未松手自动挣扎下坠
-- 🧗 拖到屏幕边缘自动扒边 → 上爬 → 蹬墙跳出
+- ✋ 长按 300ms 拖拽触发拎起动画，10 秒未松手自动挣扎下坠
+- 🚶 行走 4.3 秒加速，7-9 秒起跳，7-8 秒触边切扒边动画
+- 🧗 拖或走到屏幕边缘自动扒边 → 随机上下爬 → 蹬墙跳出
+- ⏳ 等待结束后自动醒来
 - 📌 常驻桌面顶层，透明背景（绿幕抠图）
 
 ## 视频素材
 
-14 段绿幕 MP4 放到 `assets/videos/`：
+15 段绿幕 MP4 放到 `assets/videos/`：
 
 ```
 assets/videos/
 ├── idle.mp4              # 发呆（任意时长，循环）
-├── running-right.mp4     # 向右走（任意时长，循环）
+├── running-right.mp4     # 向右走（10 秒，循环）
 ├── running-left.mp4      # 向左走（可选，无则镜像 right）
 ├── waving.mp4            # 挥手（任意时长）
 ├── jumping.mp4           # 跳跃（任意时长）
 ├── failed.mp4            # 难过（任意时长）
 ├── waiting.mp4           # 等待（任意时长）
+├── waking.mp4            # 醒来（任意时长，仅 waiting 后触发）
 ├── running.mp4           # 思考（任意时长）
 ├── review.mp4            # 检查（任意时长）
 ├── dragged.mp4           # 被拎起放松（5 秒，自动循环）
@@ -39,10 +42,13 @@ assets/videos/
 
 | 视频 | 时长 | 播放方式 | 窗口动作说明 |
 |------|------|----------|-------------|
+| **running-right/left** | 10s | 循环 | 0-4.3s 常速走，4.3-7s 加速，7-9s 40px 抛物线起跳，9-10s 静止 |
 | **dragged** | 5s | 循环 | 全程跟随鼠标 |
 | **struggling** | 5s | 单次 | 0-1s 原地挣扎，1-3s 窗口加速下坠，3s 后落定 |
+| **waiting** | 任意 | 单次 | 播完后末帧冻结 20s，然后自动切 waking |
+| **waking** | 任意 | 单次 | 仅 waiting 结束后触发，不随机出现 |
 | **edge-cling** | 3s | 循环 | 窗口不动，扒在屏幕边缘 |
-| **edge-climb** | 5s | 循环 | 0.5s 后开始向上移动，2~5 秒随机爬升时长 |
+| **edge-climb** | 5s | 循环 | 0.5s 后开始移动，2~5 秒随机时长，50% 向上/向下 |
 | **edge-jump** | 10s | 循环 | 0-2s 停顿，2-4s 抛物线上升，4-7s 下落，7-10s 静止落地 |
 
 ### 通用要求
@@ -69,7 +75,7 @@ npm run build:mac
 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run build:mac
 ```
 
-产物：`dist/DesktopPet-1.0.2.dmg`
+产物：`dist/DesktopPet-Setup.dmg`
 
 **Windows：**
 
@@ -79,4 +85,4 @@ npm run build:win
 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run build:win
 ```
 
-产物：`dist/DesktopPet-Setup-1.0.2.exe`
+产物：`dist/DesktopPet-Setup.exe`
