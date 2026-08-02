@@ -404,6 +404,22 @@ class PetEngine {
       this._setState('struggling');
     }
 
+    // 走步跳跃时到边缘 → 切换扒边
+    if (this.walking && !this._edgePhase) {
+      const we = now - this.walkStartTime;
+      if (we >= 7000 && we < 8000) {
+        const atLeft = this.walkDir === -1 && this._winX <= this._screenWA.x + 1;
+        const atRight = this.walkDir === 1 && this._winX + CELL_W >= this._screenWA.x + this._screenWA.width - 1;
+        if (atLeft || atRight) {
+          this.walking = false;
+          this._edgePhase = 'cling';
+          this._edgeSide = atLeft ? 'left' : 'right';
+          this._edgeStartTime = now;
+          this._setState(atLeft ? 'edge-cling-left' : 'edge-cling-right');
+        }
+      }
+    }
+
     // 边缘检测：拖到屏幕边缘触发攀爬
     if (this._dragTarget && this._dragPhase === 'relaxed' && !this._edgePhase) {
       const atLeft = this._winX <= this._screenWA.x + 1;
