@@ -21,7 +21,7 @@ def detect_bg_color(frame, samples=256):
     mid = len(pixels) // 2
     return (b_vals[mid], g_vals[mid], r_vals[mid])  # BGR
 
-def fix_green_screen(input_path, tolerance=80):
+def fix_green_screen(input_path, tolerance=80, target_bg=(0, 255, 0)):
     output_path = os.path.splitext(input_path)[0] + '_fixed.mp4'
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -56,12 +56,10 @@ def fix_green_screen(input_path, tolerance=80):
         r = frame[:, :, 2].astype(np.float32)
 
         dist = np.sqrt((b - bg[0])**2 + (g - bg[1])**2 + (r - bg[2])**2)
-        # 同时要求绿色主导（保护黄绿色眼睛）
-        is_green = (g > r + 15) & (g > b + 15)
-        mask = (dist < tolerance) & is_green
+        mask = dist < tolerance
 
-        # 替换为纯绿 #00FF00 = BGR(0, 255, 0)
-        frame[mask] = (0, 255, 0)
+        # 替换为目标颜色
+        frame[mask] = target_bg
 
         out.write(frame)
         frame_idx += 1
