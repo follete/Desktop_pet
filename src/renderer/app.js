@@ -148,6 +148,8 @@ class PetEngine {
     this.state = null;
     this.walking = false;
     this.walkDir = 1;
+    this.walkStartTime = 0;
+    this.walkJumpStartY = 0;
     this.userState = null;
 
     // 屏幕边界 + 窗口位置追踪
@@ -213,6 +215,12 @@ class PetEngine {
     this.state = name;
     this.walking = (name === 'running-right' || name === 'running-left');
     this.walkDir = name === 'running-right' ? 1 : -1;
+    if (this.walking) { this.walkStartTime = performance.now(); this.walkJumpStartY = 0; }
+    this._stateChangeTime = performance.now();
+    // 状态切换时清理拖拽监听和计时器
+    if (this._onMove) { document.removeEventListener('mousemove', this._onMove); this._onMove = null; }
+    if (this._onUp) { document.removeEventListener('mouseup', this._onUp); this._onUp = null; }
+    if (this._dragTimer) { clearTimeout(this._dragTimer); this._dragTimer = null; }
     this.video.play(name);
   }
 
@@ -224,50 +232,54 @@ class PetEngine {
     this._struggleStartTime = null;
     this._onMove = null;
     this._onUp = null;
+    this._dragTimer = null;
 
     this.canvas.addEventListener('mousedown', e => {
       if (e.button !== 0) return;
+      if (performance.now() - this._stateChangeTime < 300) return;
       moved = false;
       const sx = e.screenX, sy = e.screenY;
-      const onPreMove = ev => {
-        if (Math.abs(ev.screenX - sx) > 8 || Math.abs(ev.screenY - sy) > 8) {
-          document.removeEventListener('mousemove', onPreMove);
-          document.removeEventListener('mouseup', onPreUp);
-          // 终止边缘动画和挣扎
-          this._edgePhase = null; this._edgeSide = null;
-          this._dragPhase = null; this._struggleStartTime = null;
-          this._dragStartTime = performance.now();
-          this._dragPhase = 'relaxed';
-          this._dragTarget = { x: sx, y: sy, lastX: sx, lastY: sy };
-          this._setState('dragged');
-          moved = true;
-          this._onMove = e2 => {
-            if (this._edgePhase) {
-              if (performance.now() - this._edgeStartTime > 200) {
-                this._edgePhase = null; this._edgeSide = null;
-                this._dragPhase = 'relaxed';
-                this._dragStartTime = performance.now();
-                this._setState('dragged');
-              }
+      const dragTimer = setTimeout(() => {
+        this._dragTimer = null;
+        document.removeEventListener('mousemove', onPreMove);
+        document.removeEventListener('mouseup', onPreUp);
+        this._edgePhase = null; this._edgeSide = null;
+        this._dragPhase = null; this._struggleStartTime = null;
+        this._dragStartTime = performance.now();
+        this._dragPhase = 'relaxed';
+        this._dragTarget = { x: sx, y: sy, lastX: sx, lastY: sy };
+        this._setState('dragged');
+        moved = true;
+        this._onMove = e2 => {
+          if (this._edgePhase) {
+            if (performance.now() - this._edgeStartTime > 200) {
+              this._edgePhase = null; this._edgeSide = null;
+              this._dragPhase = 'relaxed';
+              this._dragStartTime = performance.now();
+              this._setState('dragged');
             }
-            if (!this._dragTarget) return;
-            this._dragTarget.x = e2.screenX;
-            this._dragTarget.y = e2.screenY;
-          };
-          this._onUp = () => {
-            if (!this._edgePhase) {
-              this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
-              this._setState('idle');
-            }
-            document.removeEventListener('mousemove', this._onMove);
-            document.removeEventListener('mouseup', this._onUp);
-            this._onMove = null; this._onUp = null;
-          };
-          document.addEventListener('mousemove', this._onMove);
-          document.addEventListener('mouseup', this._onUp);
-        }
-      };
+          }
+          if (!this._dragTarget) return;
+          this._dragTarget.x = e2.screenX;
+          this._dragTarget.y = e2.screenY;
+        };
+        this._onUp = () => {
+          if (!this._edgePhase) {
+            this._dragTarget = null; this._dragPhase = null; this._struggleStartTime = null;
+            this._setState('idle');
+          }
+          document.removeEventListener('mousemove', this._onMove);
+          document.removeEventListener('mouseup', this._onUp);
+          this._onMove = null; this._onUp = null;
+        };
+        document.addEventListener('mousemove', this._onMove);
+        document.addEventListener('mouseup', this._onUp);
+      }, 300);
+      this._dragTimer = dragTimer;
+      const onPreMove = ev => {}; // 占位，仅用于下面 removeEventListener
       const onPreUp = () => {
+        clearTimeout(dragTimer);
+        this._dragTimer = null;
         document.removeEventListener('mousemove', onPreMove);
         document.removeEventListener('mouseup', onPreUp);
       };
@@ -282,6 +294,7 @@ class PetEngine {
       this._edgePhase = null; this._edgeSide = null;
       if (this._onMove) { document.removeEventListener('mousemove', this._onMove); this._onMove = null; }
       if (this._onUp) { document.removeEventListener('mouseup', this._onUp); this._onUp = null; }
+      if (this._dragTimer) { clearTimeout(this._dragTimer); this._dragTimer = null; }
       require('electron').ipcRenderer.send('show-context-menu');
     });
     require('electron').ipcRenderer.on('set-state', (_, s) => { this.userState = s; this._setState(s); });
@@ -330,8 +343,20 @@ class PetEngine {
         dy += 1 + t * t * 4;
       }
     }
-    if (this.walking) {
-      dx += this.walkDir * 1.5;
+    if (this.walking && !this._dragTarget && !this._edgePhase) {
+      const we = now - this.walkStartTime;
+      if (we >= 10000) {
+        this.walking = false;
+        this._setState('idle');
+      } else if (we < 9000) {
+        dx += this.walkDir * (we >= 4300 ? 3 : 1.5);
+        if (we >= 7000) {
+          if (!this.walkJumpStartY) this.walkJumpStartY = this._winY;
+          const jt = (we - 7000) / 2000;
+          const targetY = this.walkJumpStartY - 40 * 4 * jt * (1 - jt);
+          dy = targetY - this._winY;
+        }
+      }
     }
 
     // 更新追踪位置（IPC 回传修正漂移）
