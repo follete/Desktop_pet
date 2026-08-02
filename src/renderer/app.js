@@ -166,6 +166,7 @@ class PetEngine {
     this._edgeStartTime = null;
     this._edgeClimbTarget = 0;
     this._edgeClimbSpeed = 0;
+    this._edgeClimbDuration = 0; // 爬升时长（ms）
     this._edgeJumpStartY = 0;
 
     this.video.onEnded = () => {
@@ -294,20 +295,21 @@ class PetEngine {
     // 边缘模式：动画接管位移
     if (this._edgePhase) {
       if (this._edgePhase === 'climb') {
-        if (this._winY > this._edgeClimbTarget && now - this._edgeStartTime >= 500) {
+        if (now - this._edgeStartTime >= 500) {
           dy = -this._edgeClimbSpeed;
         }
       } else if (this._edgePhase === 'jump') {
         const je = (now - this._edgeStartTime) / 1000;
         if (je > 2 && je <= 7) {
-          const H = 120;
+          const maxRise = this._edgeJumpStartY - this._screenWA.y;
+          const actualRise = Math.min(120, maxRise);
           let targetY;
           if (je <= 4) {
-            const rt = (je - 2) / 2; // 0→1，2-4s 上升到顶点
-            targetY = this._edgeJumpStartY - H * (2 * rt - rt * rt);
+            const rt = (je - 2) / 2;
+            targetY = this._edgeJumpStartY - actualRise * (2 * rt - rt * rt);
           } else {
-            const ft = (je - 4) / 3; // 0→1，4-7s 加速下落
-            targetY = this._edgeJumpStartY - H + H * ft * ft;
+            const ft = (je - 4) / 3;
+            targetY = this._edgeJumpStartY - actualRise + 120 * ft * ft;
           }
           dy = targetY - this._winY;
           dx = this._edgeSide === 'left' ? 1 : -1;
@@ -349,12 +351,13 @@ class PetEngine {
       if (this._edgePhase === 'cling' && now - this._edgeStartTime >= 3000) {
         this._edgePhase = 'climb';
         this._edgeStartTime = now;
-        this._edgeClimbTarget = Math.max(this._screenWA.y + 20, this._winY - (150 + Math.random() * 200));
+        this._edgeClimbTarget = this._winY - (150 + Math.random() * 200);
         const distance = this._winY - this._edgeClimbTarget;
         const duration = 2 + Math.random() * 3; // 2~5 秒随机
+        this._edgeClimbDuration = duration * 1000;
         this._edgeClimbSpeed = distance / (duration * 60);
         this._setState(this._edgeSide === 'left' ? 'edge-climb-left' : 'edge-climb-right');
-      } else if (this._edgePhase === 'climb' && this._winY <= this._edgeClimbTarget) {
+      } else if (this._edgePhase === 'climb' && now - this._edgeStartTime >= this._edgeClimbDuration) {
         this._edgePhase = 'jump';
         this._edgeStartTime = now;
         this._edgeJumpStartY = this._winY;
