@@ -5,12 +5,15 @@ const path = require('path');
 const fs = require('fs');
 
 const CELL_W = 192, CELL_H = 208;
-const STATES = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'waking', 'dragged', 'struggling', 'edge-cling-left', 'edge-cling-right', 'edge-climb-left', 'edge-climb-right', 'edge-jump-left', 'edge-jump-right'];
+const STATES = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'waking', 'dragged', 'struggling', 'edge-cling-left', 'edge-cling-right', 'edge-climb-left', 'edge-climb-right', 'edge-jump-left', 'edge-jump-right', 'walking-right', 'walking-left', 'slowly-running-right', 'slowly-running-left', 'fast-running-right', 'fast-running-left'];
 
 const MIRROR_MAP = {
   'edge-cling-right': 'edge-cling-left',
   'edge-climb-right': 'edge-climb-left',
   'edge-jump-right': 'edge-jump-left',
+  'walking-left': 'walking-right',
+  'slowly-running-left': 'slowly-running-right',
+  'fast-running-left': 'fast-running-right',
 };
 
 // === 视频引擎 ===
@@ -171,7 +174,19 @@ class PetEngine {
     this._edgeClimbDuration = 0; // 爬升时长（ms）
     this._edgeJumpStartY = 0;
 
+    // 追逐模式
+    this._chaseMode = false;
+    this._cursorX = 0; this._cursorY = 0;
+    ipcRenderer.on('cursor-pos', (_, p) => { this._cursorX = p.x; this._cursorY = p.y; });
+
     this.video.onEnded = () => {
+      if (this._chaseMode) {
+        // 追逐中的视频循环播放
+        const v = this.video.active;
+        v.currentTime = 0;
+        v.play().catch(() => {});
+        return;
+      }
       if (this.state === 'dragged') {
         if (this._dragTarget) {
           const v = this.video.active;
@@ -199,7 +214,7 @@ class PetEngine {
       } else if (this.state === 'waiting') {
         setTimeout(() => { if (this.state === 'waiting') this._setState('waking'); }, 20000);
       } else if (this.state === 'idle') {
-        const av = STATES.filter(s => !s.startsWith('edge-') && s !== 'idle' && s !== 'waking' && s !== 'dragged' && s !== 'struggling' && this.video.has(s));
+        const av = STATES.filter(s => !s.startsWith('edge-') && s !== 'idle' && s !== 'waking' && s !== 'dragged' && s !== 'struggling' && !s.startsWith('walking') && !s.startsWith('slowly-running') && !s.startsWith('fast-running') && this.video.has(s));
         if (av.length) this._setState(av[Math.floor(Math.random() * av.length)]);
       } else {
         this._setState('idle');
@@ -213,6 +228,11 @@ class PetEngine {
 
   _setState(name) {
     if (!this.video.has(name)) return;
+    // 切换到非追逐状态时自动退出追逐模式
+    if (this._chaseMode && name !== 'walking-right' && name !== 'walking-left' && name !== 'slowly-running-right' && name !== 'slowly-running-left' && name !== 'fast-running-right' && name !== 'fast-running-left') {
+      this._chaseMode = false;
+      require('electron').ipcRenderer.send('chase-stop');
+    }
     if (this.state === name) { this.video.play(name); return; }
     this.state = name;
     this.walking = (name === 'running-right' || name === 'running-left');
@@ -299,13 +319,54 @@ class PetEngine {
       if (this._dragTimer) { clearTimeout(this._dragTimer); this._dragTimer = null; }
       require('electron').ipcRenderer.send('show-context-menu');
     });
-    require('electron').ipcRenderer.on('set-state', (_, s) => { this.userState = s; this._setState(s); });
+    require('electron').ipcRenderer.on('set-state', (_, s) => {
+      this.userState = s;
+      if (s === 'chase') { this._startChase(); return; }
+      this._setState(s);
+    });
+    require('electron').ipcRenderer.on('chase-stop', () => {
+      if (!this._chaseMode) return;
+      this._chaseMode = false;
+      require('electron').ipcRenderer.send('chase-stop');
+      this._setState('idle');
+    });
+  }
+
+  _startChase() {
+    if (this._dragTarget || this._edgePhase) return;
+    this._chaseMode = true;
+    this._cursorX = this._winX + CELL_W / 2;
+    this._cursorY = this._winY + CELL_H / 2;
+    require('electron').ipcRenderer.send('chase-start');
+    this._setState('walking-right');
   }
 
   _loop(prev = 0) {
     const now = performance.now();
 
     let dx = 0, dy = 0;
+
+    // 追逐模式：追鼠标
+    if (this._chaseMode) {
+      const cx = this._winX + CELL_W / 2;
+      const cy = this._winY + CELL_H / 2;
+      const hDist = this._cursorX - cx;
+      const vDist = this._cursorY - cy;
+      const dist = Math.abs(hDist);
+      const dir = hDist >= 0 ? 1 : -1;
+      let state, speed;
+      if (dist > 450) { state = 'fast-running'; speed = 5; }
+      else if (dist > 200) { state = 'slowly-running'; speed = 3; }
+      else { state = 'walking'; speed = 1.5; }
+      const target = state + (dir === 1 ? '-right' : '-left');
+      if (this.state !== target) this._setState(target);
+      if (dist > 30) {
+        dx = dir * speed;
+        // 垂直微调，慢慢对齐鼠标高度
+        dy = Math.max(-2, Math.min(2, vDist * 0.1));
+        if (Math.abs(dy) < 0.3) dy = 0;
+      }
+    }
 
     // 边缘模式：动画接管位移
     if (this._edgePhase) {

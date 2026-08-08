@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -49,9 +49,39 @@ ipcMain.on('show-context-menu', (event) => {
     { label: '⏳ 等待', click: () => win.webContents.send('set-state', 'waiting') },
     { label: '💭 思考', click: () => win.webContents.send('set-state', 'running') },
     { label: '🔍 检查', click: () => win.webContents.send('set-state', 'review') },
+    { type: 'separator' },
+    { label: '🎯 追逐', click: () => win.webContents.send('set-state', 'chase') },
+    { label: '⏹ 停止追逐', click: () => win.webContents.send('chase-stop') },
   ]);
   menu.popup({ window: win });
 });
+
+// IPC: 追逐模式
+let chaseActive = false;
+const stopChase = () => {
+  if (!chaseActive) return;
+  chaseActive = false;
+  try { globalShortcut.unregister('Escape'); } catch (e) {}
+};
+ipcMain.on('chase-start', () => {
+  chaseActive = true;
+  try {
+    if (!globalShortcut.register('Escape', () => {
+      if (win) win.webContents.send('chase-stop');
+    })) {
+      console.warn('全局 ESC 注册失败，将只响应窗口聚焦时的按键');
+    }
+  } catch (e) {}
+});
+ipcMain.on('chase-stop', stopChase);
+
+// 追逐时推送鼠标屏幕坐标（~60fps）
+setInterval(() => {
+  if (chaseActive && win && !win.isDestroyed()) {
+    const p = screen.getCursorScreenPoint();
+    win.webContents.send('cursor-pos', { x: p.x, y: p.y });
+  }
+}, 16);
 
 function createTrayIcon() {
   // 用原生方式生成 16x16 橘色小图标
@@ -102,6 +132,12 @@ function createWindow() {
   });
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // 窗口聚焦时 ESC 也能退出追逐（全局快捷键失败时的兜底）
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      win.webContents.send('chase-stop');
+    }
+  });
   if (process.platform === 'darwin') {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     win.setAlwaysOnTop(true, 'screen-saver');
